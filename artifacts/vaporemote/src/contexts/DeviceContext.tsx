@@ -25,6 +25,7 @@ export interface ConnectedDevice {
   state: DeviceState;
   adapter: VaporizerAdapter;
   activeSession: Session | null;
+  sessionMaxDuration: number;
   addedAt: number;
 }
 
@@ -37,6 +38,10 @@ interface DeviceContextValue {
   connectDevice: () => Promise<void>;
   disconnectDevice: (deviceId: string) => Promise<void>;
   sendCommand: (deviceId: string, cmd: VaporizerCommand) => Promise<void>;
+  heatUp: (deviceId: string) => Promise<void>;
+  heatOff: (deviceId: string) => Promise<void>;
+  extendSession: (deviceId: string, extraSeconds: number) => void;
+  setSessionMaxDuration: (deviceId: string, seconds: number) => void;
   startHeatingSession: (deviceId: string) => void;
   stopHeatingSession: (deviceId: string) => void;
   allSessions: Session[];
@@ -90,6 +95,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
         state: { ...DEFAULT_DEVICE_STATE, ...initialState, connected: true },
         adapter,
         activeSession: null,
+        sessionMaxDuration: 300,
         addedAt: Date.now(),
       };
 
@@ -171,6 +177,61 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     ));
   }, [devices, allSessions]);
 
+  const heatUp = useCallback(async (deviceId: string) => {
+    const device = devices.find(d => d.id === deviceId);
+    if (!device || !device.state.connected) return;
+    if (!device.state.isHeating) {
+      await device.adapter.sendCommand({ type: "toggle_heat" });
+      const newState = await device.adapter.getState();
+      const session = startSession(
+        deviceId,
+        device.deviceType,
+        device.displayName,
+        device.state.targetTemperature ?? 185
+      );
+      setDevices(prev => prev.map(d =>
+        d.id === deviceId
+          ? { ...d, state: { ...d.state, ...newState }, activeSession: session }
+          : d
+      ));
+    }
+  }, [devices]);
+
+  const heatOff = useCallback(async (deviceId: string) => {
+    const device = devices.find(d => d.id === deviceId);
+    if (!device || !device.state.connected) return;
+    if (device.state.isHeating) {
+      await device.adapter.sendCommand({ type: "toggle_heat" });
+    }
+    const newState = await device.adapter.getState();
+    let updated = [...allSessions];
+    if (device.activeSession) {
+      const finished = endSession(device.activeSession);
+      updated = [...allSessions, finished];
+      setAllSessions(updated);
+      saveSessions(updated);
+    }
+    setDevices(prev => prev.map(d =>
+      d.id === deviceId
+        ? { ...d, state: { ...d.state, ...newState, isHeating: false }, activeSession: null }
+        : d
+    ));
+  }, [devices, allSessions]);
+
+  const extendSession = useCallback((deviceId: string, extraSeconds: number) => {
+    setDevices(prev => prev.map(d =>
+      d.id === deviceId
+        ? { ...d, sessionMaxDuration: d.sessionMaxDuration + extraSeconds }
+        : d
+    ));
+  }, []);
+
+  const setSessionMaxDuration = useCallback((deviceId: string, seconds: number) => {
+    setDevices(prev => prev.map(d =>
+      d.id === deviceId ? { ...d, sessionMaxDuration: seconds } : d
+    ));
+  }, []);
+
   return (
     <DeviceContext.Provider value={{
       devices,
@@ -181,6 +242,10 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
       connectDevice,
       disconnectDevice,
       sendCommand,
+      heatUp,
+      heatOff,
+      extendSession,
+      setSessionMaxDuration,
       startHeatingSession,
       stopHeatingSession,
       allSessions,
