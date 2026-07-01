@@ -95,16 +95,9 @@ export async function requestBluetoothDeviceForAdapter(
 ): Promise<BluetoothDevice | null> {
   if (!isWebBluetoothSupported()) return null;
 
-  const nameFilters: BluetoothLEScanFilter[] = [];
-  if (adapter.nameFilter) {
-    const names = Array.isArray(adapter.nameFilter) ? adapter.nameFilter : [adapter.nameFilter];
-    for (const n of names) nameFilters.push({ namePrefix: n });
-  }
-  const filters: BluetoothRequestDeviceFilter[] = nameFilters.length > 0 ? nameFilters : [{}];
-
   try {
     return await navigator.bluetooth.requestDevice({
-      filters,
+      acceptAllDevices: true,
       optionalServices: adapter.serviceUUIDs,
     });
   } catch (e: unknown) {
