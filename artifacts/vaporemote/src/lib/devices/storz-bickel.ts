@@ -370,7 +370,7 @@ export function createVentyAdapter(): VaporizerAdapter {
     displayName: "Venty",
     manufacturer: "Storz & Bickel",
     serviceUUIDs: [VY_SVC],
-    nameFilter: ["VY"],
+    nameFilter: ["VENTY", "Venty", "VY", "STORZ&BICKEL"],
 
     async connect(device) {
       const conn = await connectWithServiceFallback(device, VY_SVC);
