@@ -37,6 +37,8 @@ export interface DeviceState {
   fanSpeed?: number;
   fanOn?: boolean;
   boostActive?: boolean;
+  boostTemperature?: number | null;
+  activeProfile?: number | null;
   rawData?: Record<string, unknown>;
 }
 
@@ -50,7 +52,15 @@ export const DEFAULT_DEVICE_STATE: DeviceState = {
 };
 
 export interface VaporizerCommand {
-  type: "set_temperature" | "set_fan_speed" | "toggle_heat" | "toggle_fan" | "boost" | "power_off";
+  type:
+    | "set_temperature"
+    | "set_boost_temperature"
+    | "set_fan_speed"
+    | "toggle_heat"
+    | "toggle_fan"
+    | "boost"
+    | "power_off"
+    | "set_profile";
   value?: number;
 }
 

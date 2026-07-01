@@ -3,170 +3,54 @@ import { connectWithServiceFallback } from "./utils";
 
 const SB_SUFFIX = "5354-4f52-5a26-4249434b454c";
 
-const VOL_PRIMARY_SERVICE  = `10100000-${SB_SUFFIX}`;
-const VOL_CHAR_TEMPERATURE = `10110001-${SB_SUFFIX}`;
-const VOL_CHAR_TARGET_TEMP = `10110003-${SB_SUFFIX}`;
-const VOL_CHAR_HEAT_ON_OFF = `1011000f-${SB_SUFFIX}`;
-const VOL_CHAR_FAN_ON_OFF  = `10110013-${SB_SUFFIX}`;
-const VOL_CHAR_FAN_SPEED   = `10110012-${SB_SUFFIX}`;
-const VOL_CHAR_BATTERY     = `10110007-${SB_SUFFIX}`;
+// ─── Volcano Hybrid ───────────────────────────────────────────────────────────
+const VOL_SERVICE       = `10100000-${SB_SUFFIX}`;
+const VOL_CHAR_CUR_TEMP = `10110001-${SB_SUFFIX}`;
+const VOL_CHAR_TGT_TEMP = `10110003-${SB_SUFFIX}`;
+const VOL_CHAR_HEAT     = `1011000f-${SB_SUFFIX}`;
+const VOL_CHAR_FAN      = `10110013-${SB_SUFFIX}`;
+const VOL_CHAR_FAN_SPD  = `10110012-${SB_SUFFIX}`;
+const VOL_CHAR_BATTERY  = `10110007-${SB_SUFFIX}`;
 
-const VENTY_SERVICE      = `00000001-${SB_SUFFIX}`;
-const VENTY_CHAR_TEMP    = `00000011-${SB_SUFFIX}`;
-const VENTY_CHAR_TARGET  = `00000021-${SB_SUFFIX}`;
-const VENTY_CHAR_HEAT    = `00000031-${SB_SUFFIX}`;
-const VENTY_CHAR_BATTERY = `00000041-${SB_SUFFIX}`;
+// ─── Venty (confirmed from storz-rs / reactive-volcano-app RE) ────────────────
+// Service shared with Volcano but DIFFERENT characteristics (10100xxx vs 10110xxx)
+const VENTY_SERVICE      = `10100000-${SB_SUFFIX}`;
+const VENTY_CHAR_CUR_TEMP = `10100001-${SB_SUFFIX}`;  // Read + Notify, °C×10 uint16 LE
+const VENTY_CHAR_TGT_TEMP = `10100003-${SB_SUFFIX}`;  // Read + Write, °C×10 uint16 LE
+const VENTY_CHAR_HEAT     = `10100031-${SB_SUFFIX}`;  // Write: 0x01=ON, 0x00=OFF
+const VENTY_CHAR_BOOST    = `10100041-${SB_SUFFIX}`;  // Read + Write, °C×10 uint16 LE (Booster offset)
+const VENTY_CHAR_BATTERY  = `10110001-${SB_SUFFIX}`;  // Read + Notify, uint8 %
 
-export function createVolcanoHybridAdapter(): VaporizerAdapter {
-  let server: BluetoothRemoteGATTServer | null = null;
-  let primaryService: BluetoothRemoteGATTService | null = null;
-  const subscribers: Array<(state: DeviceState) => void> = [];
-  let pollingInterval: ReturnType<typeof setInterval> | null = null;
-  let cachedState: DeviceState = {
-    connected: false,
-    temperature: null,
-    targetTemperature: null,
-    isHeating: false,
-    batteryLevel: null,
-    mode: "hybrid",
-    fanOn: false,
-    fanSpeed: 0,
-  };
+// ─── Crafty+ ──────────────────────────────────────────────────────────────────
+const CRAFTY_SERVICE = "00000001-4c45-4b43-4942-265a524f5453";
+const CRAFTY_TEMP    = "00000011-4c45-4b43-4942-265a524f5453";
+const CRAFTY_TARGET  = "00000021-4c45-4b43-4942-265a524f5453";
+const CRAFTY_BATTERY = "00000031-4c45-4b43-4942-265a524f5453";
 
-  async function readChar(uuid: string): Promise<DataView | null> {
-    if (!primaryService) return null;
-    try {
-      const char = await primaryService.getCharacteristic(uuid);
-      return await char.readValue();
-    } catch { return null; }
-  }
+// ─────────────────────────────────────────────────────────────────────────────
 
-  async function writeChar(uuid: string, value: Uint8Array): Promise<void> {
-    if (!primaryService) return;
-    try {
-      const char = await primaryService.getCharacteristic(uuid);
-      await char.writeValueWithoutResponse(value);
-    } catch (e) { console.error("Volcano write error:", e); }
-  }
-
-  async function fetchState(): Promise<DeviceState> {
-    const [tempVal, targetVal, heatVal, fanVal, fanSpeedVal, battVal] = await Promise.all([
-      readChar(VOL_CHAR_TEMPERATURE),
-      readChar(VOL_CHAR_TARGET_TEMP),
-      readChar(VOL_CHAR_HEAT_ON_OFF),
-      readChar(VOL_CHAR_FAN_ON_OFF),
-      readChar(VOL_CHAR_FAN_SPEED),
-      readChar(VOL_CHAR_BATTERY),
-    ]);
-
-    cachedState = {
-      ...cachedState,
-      connected: server?.connected ?? false,
-      temperature: tempVal ? tempVal.getUint16(0, true) / 10 : cachedState.temperature,
-      targetTemperature: targetVal ? targetVal.getUint16(0, true) / 10 : cachedState.targetTemperature,
-      isHeating: heatVal ? heatVal.getUint8(0) === 1 : cachedState.isHeating,
-      fanOn: fanVal ? fanVal.getUint8(0) === 1 : cachedState.fanOn,
-      fanSpeed: fanSpeedVal ? fanSpeedVal.getUint8(0) : cachedState.fanSpeed,
-      batteryLevel: battVal ? battVal.getUint8(0) : cachedState.batteryLevel,
-      rawData: {
-        temperature_raw: tempVal ? tempVal.getUint16(0, true) : null,
-        target_temp_raw: targetVal ? targetVal.getUint16(0, true) : null,
-        heat_raw: heatVal ? heatVal.getUint8(0) : null,
-        fan_raw: fanVal ? fanVal.getUint8(0) : null,
-        fan_speed_raw: fanSpeedVal ? fanSpeedVal.getUint8(0) : null,
-        battery_raw: battVal ? battVal.getUint8(0) : null,
-      },
-    };
-    return cachedState;
-  }
-
-  return {
-    deviceType: "volcano_hybrid",
-    displayName: "Volcano Hybrid",
-    manufacturer: "Storz & Bickel",
-    serviceUUIDs: [VOL_PRIMARY_SERVICE, `10110000-${SB_SUFFIX}`],
-    nameFilter: ["VOLCANO"],
-
-    async connect(device) {
-      const conn = await connectWithServiceFallback(device, VOL_PRIMARY_SERVICE, [`10110000-${SB_SUFFIX}`]);
-      server = conn.server;
-      primaryService = conn.service;
-      cachedState = { ...cachedState, connected: true };
-
-      pollingInterval = setInterval(async () => {
-        const state = await fetchState();
-        subscribers.forEach(cb => cb(state));
-      }, 2000);
-
-      return fetchState();
-    },
-
-    async disconnect() {
-      if (pollingInterval) clearInterval(pollingInterval);
-      server?.disconnect();
-      cachedState = { ...cachedState, connected: false };
-    },
-
-    async getState() { return fetchState(); },
-
-    async sendCommand(cmd: VaporizerCommand) {
-      switch (cmd.type) {
-        case "set_temperature": {
-          const raw = Math.round((cmd.value ?? 185) * 10);
-          const buf = new Uint8Array(2);
-          new DataView(buf.buffer).setUint16(0, raw, true);
-          await writeChar(VOL_CHAR_TARGET_TEMP, buf);
-          break;
-        }
-        case "toggle_heat":
-          await writeChar(VOL_CHAR_HEAT_ON_OFF, new Uint8Array([cachedState.isHeating ? 0 : 1]));
-          cachedState.isHeating = !cachedState.isHeating;
-          break;
-        case "toggle_fan":
-          await writeChar(VOL_CHAR_FAN_ON_OFF, new Uint8Array([cachedState.fanOn ? 0 : 1]));
-          cachedState.fanOn = !cachedState.fanOn;
-          break;
-        case "set_fan_speed":
-          await writeChar(VOL_CHAR_FAN_SPEED, new Uint8Array([cmd.value ?? 5]));
-          cachedState.fanSpeed = cmd.value ?? 5;
-          break;
-        case "power_off":
-          await writeChar(VOL_CHAR_HEAT_ON_OFF, new Uint8Array([0]));
-          await writeChar(VOL_CHAR_FAN_ON_OFF, new Uint8Array([0]));
-          cachedState.isHeating = false;
-          cachedState.fanOn = false;
-          break;
-      }
-      subscribers.forEach(cb => cb({ ...cachedState }));
-    },
-
-    subscribeToUpdates(callback) {
-      subscribers.push(callback);
-      return () => {
-        const idx = subscribers.indexOf(callback);
-        if (idx >= 0) subscribers.splice(idx, 1);
-      };
-    },
-
-    async getRawData() { return cachedState.rawData ?? {}; },
-  };
+function encodeTemp(celsius: number): Uint8Array {
+  const raw = Math.round(celsius * 10);
+  const buf = new Uint8Array(2);
+  new DataView(buf.buffer).setUint16(0, raw, true);
+  return buf;
 }
 
-export function createVentyAdapter(): VaporizerAdapter {
+function decodeTemp(dv: DataView): number {
+  return dv.getUint16(0, true) / 10;
+}
+
+// ─── Volcano Hybrid ───────────────────────────────────────────────────────────
+
+export function createVolcanoHybridAdapter(): VaporizerAdapter {
   let server: BluetoothRemoteGATTServer | null = null;
   let service: BluetoothRemoteGATTService | null = null;
   const subscribers: Array<(state: DeviceState) => void> = [];
   let pollingInterval: ReturnType<typeof setInterval> | null = null;
-  let notifyHandlers: Array<{ char: BluetoothRemoteGATTCharacteristic; fn: (e: Event) => void }> = [];
 
   let cached: DeviceState = {
-    connected: false,
-    temperature: null,
-    targetTemperature: null,
-    isHeating: false,
-    batteryLevel: null,
-    mode: "convection",
-    rawData: {},
+    connected: false, temperature: null, targetTemperature: null,
+    isHeating: false, batteryLevel: null, mode: "hybrid", fanOn: false, fanSpeed: 0,
   };
 
   async function readChar(uuid: string): Promise<DataView | null> {
@@ -179,36 +63,151 @@ export function createVentyAdapter(): VaporizerAdapter {
     if (!service) return;
     try {
       const char = await service.getCharacteristic(uuid);
-      await char.writeValueWithoutResponse(value);
-    } catch (e) { console.error("Venty write error:", e); }
-  }
-
-  function encodeTemp(celsius: number): Uint8Array {
-    const raw = Math.round(celsius * 10);
-    const buf = new Uint8Array(2);
-    new DataView(buf.buffer).setUint16(0, raw, true);
-    return buf;
+      try { await char.writeValueWithoutResponse(value); }
+      catch { await char.writeValue(value); }
+    } catch (e) { console.warn("Volcano write:", e); }
   }
 
   async function fetchState(): Promise<DeviceState> {
-    const [tRaw, tgtRaw, heatRaw, battRaw] = await Promise.all([
-      readChar(VENTY_CHAR_TEMP),
-      readChar(VENTY_CHAR_TARGET),
-      readChar(VENTY_CHAR_HEAT),
+    const [tRaw, tgtRaw, heatRaw, fanRaw, fanSpdRaw, batRaw] = await Promise.all([
+      readChar(VOL_CHAR_CUR_TEMP), readChar(VOL_CHAR_TGT_TEMP),
+      readChar(VOL_CHAR_HEAT), readChar(VOL_CHAR_FAN),
+      readChar(VOL_CHAR_FAN_SPD), readChar(VOL_CHAR_BATTERY),
+    ]);
+    cached = {
+      ...cached,
+      connected: server?.connected ?? false,
+      temperature:       tRaw    ? decodeTemp(tRaw)          : cached.temperature,
+      targetTemperature: tgtRaw  ? decodeTemp(tgtRaw)        : cached.targetTemperature,
+      isHeating:         heatRaw ? heatRaw.getUint8(0) === 1 : cached.isHeating,
+      fanOn:             fanRaw  ? fanRaw.getUint8(0) === 1  : cached.fanOn,
+      fanSpeed:          fanSpdRaw ? fanSpdRaw.getUint8(0)   : cached.fanSpeed,
+      batteryLevel:      batRaw  ? batRaw.getUint8(0)        : cached.batteryLevel,
+      rawData: {
+        temperature_raw: tRaw    ? tRaw.getUint16(0, true)    : null,
+        target_temp_raw: tgtRaw  ? tgtRaw.getUint16(0, true)  : null,
+        heat_raw:        heatRaw ? heatRaw.getUint8(0)         : null,
+        fan_raw:         fanRaw  ? fanRaw.getUint8(0)          : null,
+        fan_speed_raw:   fanSpdRaw ? fanSpdRaw.getUint8(0)    : null,
+        battery_raw:     batRaw  ? batRaw.getUint8(0)          : null,
+      },
+    };
+    return cached;
+  }
+
+  return {
+    deviceType: "volcano_hybrid",
+    displayName: "Volcano Hybrid",
+    manufacturer: "Storz & Bickel",
+    serviceUUIDs: [VOL_SERVICE],
+    nameFilter: ["VOLCANO"],
+
+    async connect(device) {
+      const conn = await connectWithServiceFallback(device, VOL_SERVICE);
+      server = conn.server;
+      service = conn.service;
+      cached = { ...cached, connected: true };
+      pollingInterval = setInterval(async () => {
+        const s = await fetchState();
+        subscribers.forEach(cb => cb(s));
+      }, 2000);
+      return fetchState();
+    },
+
+    async disconnect() {
+      if (pollingInterval) clearInterval(pollingInterval);
+      server?.disconnect();
+      cached = { ...cached, connected: false };
+    },
+
+    async getState() { return fetchState(); },
+
+    async sendCommand(cmd: VaporizerCommand) {
+      switch (cmd.type) {
+        case "set_temperature":
+          await writeChar(VOL_CHAR_TGT_TEMP, encodeTemp(cmd.value ?? 185));
+          cached.targetTemperature = cmd.value ?? 185;
+          break;
+        case "toggle_heat":
+          await writeChar(VOL_CHAR_HEAT, new Uint8Array([cached.isHeating ? 0 : 1]));
+          cached.isHeating = !cached.isHeating;
+          break;
+        case "toggle_fan":
+          await writeChar(VOL_CHAR_FAN, new Uint8Array([cached.fanOn ? 0 : 1]));
+          cached.fanOn = !cached.fanOn;
+          break;
+        case "set_fan_speed":
+          await writeChar(VOL_CHAR_FAN_SPD, new Uint8Array([cmd.value ?? 5]));
+          cached.fanSpeed = cmd.value ?? 5;
+          break;
+        case "power_off":
+          await writeChar(VOL_CHAR_HEAT, new Uint8Array([0]));
+          await writeChar(VOL_CHAR_FAN, new Uint8Array([0]));
+          cached.isHeating = false;
+          cached.fanOn = false;
+          break;
+      }
+      subscribers.forEach(cb => cb({ ...cached }));
+    },
+
+    subscribeToUpdates(cb) {
+      subscribers.push(cb);
+      return () => { const i = subscribers.indexOf(cb); if (i >= 0) subscribers.splice(i, 1); };
+    },
+
+    async getRawData() { return cached.rawData ?? {}; },
+  };
+}
+
+// ─── Venty ────────────────────────────────────────────────────────────────────
+
+export function createVentyAdapter(): VaporizerAdapter {
+  let server: BluetoothRemoteGATTServer | null = null;
+  let service: BluetoothRemoteGATTService | null = null;
+  const subscribers: Array<(state: DeviceState) => void> = [];
+  let pollingInterval: ReturnType<typeof setInterval> | null = null;
+  let notifyHandlers: Array<{ char: BluetoothRemoteGATTCharacteristic; fn: (e: Event) => void }> = [];
+
+  let cached: DeviceState = {
+    connected: false, temperature: null, targetTemperature: null,
+    isHeating: false, batteryLevel: null, mode: "convection",
+    boostTemperature: null, rawData: {},
+  };
+
+  async function readChar(uuid: string): Promise<DataView | null> {
+    if (!service) return null;
+    try { return await (await service.getCharacteristic(uuid)).readValue(); }
+    catch { return null; }
+  }
+
+  async function writeChar(uuid: string, value: Uint8Array): Promise<void> {
+    if (!service) { console.warn("Venty: no service"); return; }
+    try {
+      const char = await service.getCharacteristic(uuid);
+      try { await char.writeValueWithoutResponse(value); }
+      catch { await char.writeValue(value); }
+    } catch (e) { console.warn("Venty write:", e); }
+  }
+
+  async function fetchState(): Promise<DeviceState> {
+    const [tRaw, tgtRaw, boostRaw, batRaw] = await Promise.all([
+      readChar(VENTY_CHAR_CUR_TEMP),
+      readChar(VENTY_CHAR_TGT_TEMP),
+      readChar(VENTY_CHAR_BOOST),
       readChar(VENTY_CHAR_BATTERY),
     ]);
     cached = {
       ...cached,
       connected: server?.connected ?? false,
-      temperature: tRaw ? tRaw.getUint16(0, true) / 10 : cached.temperature,
-      targetTemperature: tgtRaw ? tgtRaw.getUint16(0, true) / 10 : cached.targetTemperature,
-      isHeating: heatRaw ? heatRaw.getUint8(0) === 1 : cached.isHeating,
-      batteryLevel: battRaw ? battRaw.getUint8(0) : cached.batteryLevel,
+      temperature:       tRaw    ? decodeTemp(tRaw)          : cached.temperature,
+      targetTemperature: tgtRaw  ? decodeTemp(tgtRaw)        : cached.targetTemperature,
+      boostTemperature:  boostRaw ? decodeTemp(boostRaw)     : cached.boostTemperature,
+      batteryLevel:      batRaw  ? batRaw.getUint8(0)        : cached.batteryLevel,
       rawData: {
-        temp_raw: tRaw ? tRaw.getUint16(0, true) : null,
-        target_raw: tgtRaw ? tgtRaw.getUint16(0, true) : null,
-        heat_raw: heatRaw ? heatRaw.getUint8(0) : null,
-        battery_raw: battRaw ? battRaw.getUint8(0) : null,
+        temp_raw:   tRaw    ? tRaw.getUint16(0, true)    : cached.rawData?.temp_raw,
+        target_raw: tgtRaw  ? tgtRaw.getUint16(0, true)  : cached.rawData?.target_raw,
+        boost_raw:  boostRaw ? boostRaw.getUint16(0, true) : cached.rawData?.boost_raw,
+        battery:    batRaw  ? batRaw.getUint8(0)          : cached.rawData?.battery,
       },
     };
     return cached;
@@ -225,7 +224,9 @@ export function createVentyAdapter(): VaporizerAdapter {
       };
       char.addEventListener("characteristicvaluechanged", fn);
       notifyHandlers.push({ char, fn });
-    } catch { /* notifications not supported on this char, polling will handle it */ }
+    } catch {
+      // notifications not supported on this char — polling covers it
+    }
   }
 
   return {
@@ -241,20 +242,23 @@ export function createVentyAdapter(): VaporizerAdapter {
       service = conn.service;
       cached = { ...cached, connected: true };
 
-      await trySubscribeNotify(VENTY_CHAR_TEMP, (dv) => {
-        const temp = dv.getUint16(0, true) / 10;
+      // Live temperature via BLE notify
+      await trySubscribeNotify(VENTY_CHAR_CUR_TEMP, (dv) => {
+        const temp = decodeTemp(dv);
         cached = { ...cached, temperature: temp, rawData: { ...cached.rawData, temp_raw: dv.getUint16(0, true) } };
         subscribers.forEach(cb => cb({ ...cached }));
       });
 
+      // Battery via BLE notify
       await trySubscribeNotify(VENTY_CHAR_BATTERY, (dv) => {
         cached = { ...cached, batteryLevel: dv.getUint8(0) };
         subscribers.forEach(cb => cb({ ...cached }));
       });
 
+      // Polling fallback every 3 s
       pollingInterval = setInterval(async () => {
-        const state = await fetchState();
-        subscribers.forEach(cb => cb(state));
+        const s = await fetchState();
+        subscribers.forEach(cb => cb(s));
       }, 3000);
 
       return fetchState();
@@ -276,15 +280,19 @@ export function createVentyAdapter(): VaporizerAdapter {
     async sendCommand(cmd: VaporizerCommand) {
       switch (cmd.type) {
         case "set_temperature":
-          await writeChar(VENTY_CHAR_TARGET, encodeTemp(cmd.value ?? 185));
+          await writeChar(VENTY_CHAR_TGT_TEMP, encodeTemp(cmd.value ?? 185));
           cached.targetTemperature = cmd.value ?? 185;
           break;
+        case "set_boost_temperature":
+          await writeChar(VENTY_CHAR_BOOST, encodeTemp(cmd.value ?? 15));
+          cached.boostTemperature = cmd.value ?? 15;
+          break;
         case "toggle_heat":
-          await writeChar(VENTY_CHAR_HEAT, new Uint8Array([cached.isHeating ? 0 : 1]));
+          await writeChar(VENTY_CHAR_HEAT, new Uint8Array([cached.isHeating ? 0x00 : 0x01]));
           cached.isHeating = !cached.isHeating;
           break;
         case "power_off":
-          await writeChar(VENTY_CHAR_HEAT, new Uint8Array([0]));
+          await writeChar(VENTY_CHAR_HEAT, new Uint8Array([0x00]));
           cached.isHeating = false;
           break;
       }
@@ -300,12 +308,9 @@ export function createVentyAdapter(): VaporizerAdapter {
   };
 }
 
-export function createCraftyPlusAdapter(): VaporizerAdapter {
-  const CRAFTY_SERVICE = "00000001-4c45-4b43-4942-265a524f5453";
-  const CRAFTY_TEMP    = "00000011-4c45-4b43-4942-265a524f5453";
-  const CRAFTY_TARGET  = "00000021-4c45-4b43-4942-265a524f5453";
-  const CRAFTY_BATTERY = "00000031-4c45-4b43-4942-265a524f5453";
+// ─── Crafty+ ──────────────────────────────────────────────────────────────────
 
+export function createCraftyPlusAdapter(): VaporizerAdapter {
   let server: BluetoothRemoteGATTServer | null = null;
   let service: BluetoothRemoteGATTService | null = null;
   let pollingInterval: ReturnType<typeof setInterval> | null = null;
@@ -326,10 +331,14 @@ export function createCraftyPlusAdapter(): VaporizerAdapter {
     cached = {
       ...cached,
       connected: server?.connected ?? false,
-      temperature: t ? t.getUint16(0, true) / 10 : cached.temperature,
-      targetTemperature: tgt ? tgt.getUint16(0, true) / 10 : cached.targetTemperature,
-      batteryLevel: bat ? bat.getUint8(0) : cached.batteryLevel,
-      rawData: { temp_raw: t?.getUint16(0, true), target_raw: tgt?.getUint16(0, true), battery_raw: bat?.getUint8(0) },
+      temperature:       t   ? decodeTemp(t)   : cached.temperature,
+      targetTemperature: tgt ? decodeTemp(tgt) : cached.targetTemperature,
+      batteryLevel:      bat ? bat.getUint8(0) : cached.batteryLevel,
+      rawData: {
+        temp_raw:    t   ? t.getUint16(0, true)   : null,
+        target_raw:  tgt ? tgt.getUint16(0, true) : null,
+        battery_raw: bat ? bat.getUint8(0)         : null,
+      },
     };
     return cached;
   }
@@ -352,30 +361,33 @@ export function createCraftyPlusAdapter(): VaporizerAdapter {
       }, 2000);
       return fetchState();
     },
+
     async disconnect() {
       if (pollingInterval) clearInterval(pollingInterval);
       server?.disconnect();
       cached = { ...cached, connected: false };
     },
+
     async getState() { return fetchState(); },
+
     async sendCommand(cmd) {
       if (!service) return;
       if (cmd.type === "set_temperature") {
-        const raw = Math.round((cmd.value ?? 180) * 10);
-        const buf = new Uint8Array(2);
-        new DataView(buf.buffer).setUint16(0, raw, true);
         const char = await service.getCharacteristic(CRAFTY_TARGET);
-        await char.writeValueWithoutResponse(buf);
+        try { await char.writeValueWithoutResponse(encodeTemp(cmd.value ?? 180)); }
+        catch { await char.writeValue(encodeTemp(cmd.value ?? 180)); }
         cached.targetTemperature = cmd.value ?? 180;
       } else if (cmd.type === "toggle_heat") {
         cached.isHeating = !cached.isHeating;
       }
       subscribers.forEach(cb => cb({ ...cached }));
     },
+
     subscribeToUpdates(cb) {
       subscribers.push(cb);
       return () => { const i = subscribers.indexOf(cb); if (i >= 0) subscribers.splice(i, 1); };
     },
+
     async getRawData() { return cached.rawData ?? {}; },
   };
 }

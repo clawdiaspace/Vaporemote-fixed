@@ -3,7 +3,7 @@ import { useSettings } from "@/contexts/SettingsContext";
 import { useState, useCallback, useRef } from "react";
 import {
   Bluetooth, Plus, Wind, PowerOff, Thermometer, Battery,
-  Clock, Wifi, WifiOff, Flame, PenLine, Check, X, AlarmClock, TimerReset,
+  Clock, Wifi, WifiOff, Flame, PenLine, Check, X, AlarmClock, TimerReset, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,7 @@ import type { ConnectedDevice } from "@/contexts/DeviceContext";
 import { motion, AnimatePresence } from "framer-motion";
 import VolcanoRoutines from "@/components/VolcanoRoutines";
 import DevicePickerModal from "@/components/DevicePickerModal";
+import { CARTA_SPORT_PROFILES } from "@/lib/devices/focus-v";
 
 function TempGauge({ current, target, unit, isHeating }: {
   current: number | null;
@@ -246,8 +247,11 @@ function DeviceCard({ device }: { device: ConnectedDevice }) {
   const { sendCommand, heatUp, heatOff, extendSession, setSessionMaxDuration } = useDevices();
   const { settings } = useSettings();
   const [localTarget, setLocalTarget] = useState(device.state.targetTemperature ?? 185);
+  const [localBoost, setLocalBoost] = useState(device.state.boostTemperature ?? 15);
   const range = DEVICE_TEMP_RANGES[device.deviceType];
   const isVolcano = device.deviceType === "volcano_hybrid";
+  const isVenty = device.deviceType === "venty";
+  const isCartaSport = device.deviceType === "focus_carta_sport";
 
   const handleSetTemp = useCallback((val: number[]) => {
     setLocalTarget(val[0]);
@@ -257,6 +261,11 @@ function DeviceCard({ device }: { device: ConnectedDevice }) {
   const handlePresetSelect = useCallback((temp: number) => {
     setLocalTarget(temp);
     sendCommand(device.id, { type: "set_temperature", value: temp });
+  }, [device.id, sendCommand]);
+
+  const handleSetBoost = useCallback((val: number[]) => {
+    setLocalBoost(val[0]);
+    sendCommand(device.id, { type: "set_boost_temperature", value: val[0] });
   }, [device.id, sendCommand]);
 
   const handleHeatUp = useCallback(() => {
@@ -320,11 +329,51 @@ function DeviceCard({ device }: { device: ConnectedDevice }) {
           />
         </div>
 
-        <PresetRow
-          deviceType={device.deviceType}
-          unit={settings.tempUnit}
-          onSelect={handlePresetSelect}
-        />
+        {/* Carta Sport — 5-preset color profile grid */}
+        {isCartaSport ? (
+          <div className="space-y-2">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold flex items-center gap-1.5">
+              <Flame size={10} /> Heizstufen
+            </span>
+            <div className="grid grid-cols-5 gap-2">
+              {CARTA_SPORT_PROFILES.map((p) => {
+                const isActive = device.state.activeProfile === p.index;
+                return (
+                  <button
+                    key={p.index}
+                    onClick={() => {
+                      sendCommand(device.id, { type: "set_profile", value: p.index });
+                      setLocalTarget(p.tempC);
+                    }}
+                    disabled={!device.state.connected}
+                    title={`${p.name} — ${p.tempF}°F / ${p.tempC}°C`}
+                    className={`flex flex-col items-center gap-1.5 p-2 rounded-xl border transition-all duration-200 disabled:opacity-40 ${
+                      isActive
+                        ? "border-white/40 bg-white/10 shadow-[0_0_12px_rgba(255,255,255,0.15)]"
+                        : "border-border/30 bg-black/20 hover:bg-white/5 hover:border-white/20"
+                    }`}
+                  >
+                    <div
+                      className={`w-6 h-6 rounded-full transition-all ${isActive ? "shadow-[0_0_10px_var(--glow)]" : ""}`}
+                      style={{
+                        backgroundColor: p.color,
+                        ["--glow" as string]: p.color,
+                        boxShadow: isActive ? `0 0 10px ${p.color}` : undefined,
+                      }}
+                    />
+                    <span className="text-[9px] font-mono text-muted-foreground leading-tight">{p.tempF}°</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <PresetRow
+            deviceType={device.deviceType}
+            unit={settings.tempUnit}
+            onSelect={handlePresetSelect}
+          />
+        )}
 
         <div className="space-y-3 bg-black/20 p-4 rounded-xl border border-white/5">
           <div className="flex justify-between text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
@@ -343,6 +392,32 @@ function DeviceCard({ device }: { device: ConnectedDevice }) {
             className="w-full"
           />
         </div>
+
+        {/* Venty — Boost temperature control */}
+        {isVenty && (
+          <div className="space-y-3 bg-black/20 p-4 rounded-xl border border-amber-500/20">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-widest text-amber-400/80 font-semibold flex items-center gap-1.5">
+                <Zap size={10} /> Boost-Temperatur
+              </span>
+              <span className="text-[10px] font-mono text-amber-400 font-bold">
+                +{localBoost.toFixed(1)}°C
+              </span>
+            </div>
+            <Slider
+              min={1}
+              max={30}
+              step={1}
+              value={[localBoost]}
+              onValueChange={handleSetBoost}
+              disabled={!device.state.connected}
+              className="w-full"
+            />
+            <p className="text-[9px] text-muted-foreground/60">
+              Boost-Ziel: {(localTarget + localBoost).toFixed(1)}°C · Superboost: {(localTarget + localBoost * 2).toFixed(1)}°C
+            </p>
+          </div>
+        )}
 
         {!device.activeSession && (
           <SessionDurationPicker

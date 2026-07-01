@@ -1,52 +1,76 @@
 import type { VaporizerAdapter, DeviceState, VaporizerCommand } from "../bluetooth";
 import { connectWithServiceFallback } from "./utils";
 
+// ── Focus V Carta / Carta Sport BLE protocol ──────────────────────────────────
+// Telink-based proprietary stack (service fee9, write/notify d44bc439...)
 const CARTA_SERVICE     = "0000fee9-0000-1000-8000-00805f9b34fb";
 const CARTA_WRITE_CHAR  = "d44bc439-abfd-45a2-b575-925416129600";
 const CARTA_NOTIFY_CHAR = "d44bc439-abfd-45a2-b575-925416129601";
 
-const CMD_GET_STATUS   = new Uint8Array([0xef, 0x01, 0x00]);
-const CMD_HEAT_ON      = new Uint8Array([0xef, 0x05, 0x01]);
-const CMD_HEAT_OFF     = new Uint8Array([0xef, 0x05, 0x00]);
+// Protocol commands (0xEF header, sub-byte, payload)
+const CMD_GET_STATUS = new Uint8Array([0xef, 0x01, 0x00]);
+const CMD_HEAT_ON    = new Uint8Array([0xef, 0x05, 0x01]);
+const CMD_HEAT_OFF   = new Uint8Array([0xef, 0x05, 0x00]);
+
+function buildSetTempCmd(celsius: number): Uint8Array {
+  const raw = Math.round(celsius * 10);
+  return new Uint8Array([0xef, 0x07, (raw >> 8) & 0xff, raw & 0xff]);
+}
 
 function parseCartaPacket(data: DataView): Partial<DeviceState> & { rawData?: Record<string, unknown> } {
   if (data.byteLength < 3) return {};
   const cmd = data.getUint8(1);
   const val = data.getUint8(2);
 
-  if (cmd === 0x06) {
-    const tempRaw = data.byteLength >= 4 ? (data.getUint8(2) << 8) | data.getUint8(3) : 0;
-    return {
-      temperature: tempRaw / 10,
-      rawData: { cmd: `0x${cmd.toString(16)}`, raw: tempRaw },
-    };
+  switch (cmd) {
+    case 0x06: {
+      const tempRaw = data.byteLength >= 4 ? (data.getUint8(2) << 8) | data.getUint8(3) : 0;
+      return { temperature: tempRaw / 10, rawData: { cmd: `0x${cmd.toString(16)}`, temp_raw: tempRaw } };
+    }
+    case 0x05:
+      return { isHeating: val === 1, rawData: { cmd: `0x${cmd.toString(16)}`, heat: val } };
+    case 0x07: {
+      const tgtRaw = data.byteLength >= 4 ? (data.getUint8(2) << 8) | data.getUint8(3) : 0;
+      return { targetTemperature: tgtRaw / 10, rawData: { cmd: `0x${cmd.toString(16)}`, target_raw: tgtRaw } };
+    }
+    case 0x0a:
+      return { batteryLevel: val, rawData: { cmd: `0x${cmd.toString(16)}`, battery: val } };
+    case 0x02:
+      return { activeProfile: val, rawData: { cmd: `0x${cmd.toString(16)}`, profile: val } };
+    default:
+      return { rawData: { cmd: `0x${cmd.toString(16)}`, value: val } };
   }
-  if (cmd === 0x05) {
-    return {
-      isHeating: val === 1,
-      rawData: { cmd: `0x${cmd.toString(16)}`, heat: val },
-    };
-  }
-  if (cmd === 0x07) {
-    const targetRaw = data.byteLength >= 4 ? (data.getUint8(2) << 8) | data.getUint8(3) : 0;
-    return {
-      targetTemperature: targetRaw / 10,
-      rawData: { cmd: `0x${cmd.toString(16)}`, target_raw: targetRaw },
-    };
-  }
-  if (cmd === 0x0a) {
-    return {
-      batteryLevel: val,
-      rawData: { cmd: `0x${cmd.toString(16)}`, battery: val },
-    };
-  }
-  return { rawData: { cmd: `0x${cmd.toString(16)}`, value: val } };
 }
 
-function buildSetTempCommand(celsius: number): Uint8Array {
-  const raw = Math.round(celsius * 10);
-  return new Uint8Array([0xef, 0x07, (raw >> 8) & 0xff, raw & 0xff]);
+// ── Carta Sport preset profiles ───────────────────────────────────────────────
+export interface CartaSportProfile {
+  index: number;
+  name: string;
+  tempF: number;        // °F as shown on device
+  tempC: number;        // °C derived
+  color: string;        // CSS hex color for UI
+  colorName: string;
 }
+
+export const CARTA_SPORT_PROFILES: CartaSportProfile[] = [
+  { index: 0, name: "Blau",   tempF: 480, tempC: 248.9, color: "#3b82f6", colorName: "Blue"   },
+  { index: 1, name: "Grün",   tempF: 500, tempC: 260.0, color: "#22c55e", colorName: "Green"  },
+  { index: 2, name: "Weiß",   tempF: 515, tempC: 268.3, color: "#e2e8f0", colorName: "White"  },
+  { index: 3, name: "Orange", tempF: 540, tempC: 282.2, color: "#f97316", colorName: "Orange" },
+  { index: 4, name: "Lila",   tempF: 565, tempC: 296.1, color: "#a855f7", colorName: "Purple" },
+];
+
+// ── Carta (original) ──────────────────────────────────────────────────────────
+export function createCartaAdapter(): VaporizerAdapter {
+  return createCartaAdapterBase("focus_carta", "Carta", ["CARTA", "Focus V Carta"]);
+}
+
+// ── Carta Sport ───────────────────────────────────────────────────────────────
+export function createCartaSportAdapter(): VaporizerAdapter {
+  return createCartaAdapterBase("focus_carta_sport", "Carta Sport", ["CARTA SPORT", "Carta Sport"]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function createCartaAdapterBase(
   deviceType: "focus_carta" | "focus_carta_sport",
@@ -62,20 +86,20 @@ function createCartaAdapterBase(
   let pollingInterval: ReturnType<typeof setInterval> | null = null;
 
   let cached: DeviceState = {
-    connected: false,
-    temperature: null,
-    targetTemperature: null,
-    isHeating: false,
-    batteryLevel: null,
-    mode: "conduction",
-    rawData: {},
+    connected: false, temperature: null, targetTemperature: null,
+    isHeating: false, batteryLevel: null, mode: "conduction",
+    activeProfile: null, rawData: {},
   };
 
   async function send(data: Uint8Array): Promise<void> {
     if (!writeChar) return;
-    try { await writeChar.writeValueWithoutResponse(data); }
-    catch (e) { console.error("Carta write error:", e); }
+    try {
+      try { await writeChar.writeValueWithoutResponse(data); }
+      catch { await writeChar.writeValue(data); }
+    } catch (e) { console.warn("Carta write:", e); }
   }
+
+  function notify() { subscribers.forEach(cb => cb({ ...cached })); }
 
   return {
     deviceType,
@@ -90,24 +114,31 @@ function createCartaAdapterBase(
       server = conn.server;
       service = conn.service;
       if (!service) { cached = { ...cached, connected: true }; return { ...cached }; }
+
       try {
         writeChar = await service.getCharacteristic(CARTA_WRITE_CHAR);
         notifyChar = await service.getCharacteristic(CARTA_NOTIFY_CHAR);
-      } catch { cached = { ...cached, connected: true }; return { ...cached }; }
+      } catch (e) {
+        console.warn("Carta: char lookup failed", e);
+        cached = { ...cached, connected: true };
+        return { ...cached };
+      }
 
       await notifyChar.startNotifications();
-      notifyHandler = (e) => {
+      notifyHandler = (e: Event) => {
         const char = e.target as BluetoothRemoteGATTCharacteristic;
-        const parsed = parseCartaPacket(char.value!);
+        if (!char.value) return;
+        const parsed = parseCartaPacket(char.value);
         cached = {
           ...cached,
           ...parsed,
           rawData: { ...cached.rawData, ...(parsed.rawData ?? {}) },
         };
-        subscribers.forEach(cb => cb({ ...cached }));
+        notify();
       };
       notifyChar.addEventListener("characteristicvaluechanged", notifyHandler);
 
+      // Request status every 3 s as keepalive / polling fallback
       pollingInterval = setInterval(() => { send(CMD_GET_STATUS); }, 3000);
 
       await send(CMD_GET_STATUS);
@@ -130,8 +161,20 @@ function createCartaAdapterBase(
     async sendCommand(cmd: VaporizerCommand) {
       switch (cmd.type) {
         case "set_temperature":
-          await send(buildSetTempCommand(cmd.value ?? 200));
+          await send(buildSetTempCmd(cmd.value ?? 200));
+          cached.targetTemperature = cmd.value ?? 200;
+          cached.activeProfile = null; // custom temp clears profile
           break;
+        case "set_profile": {
+          const idx = cmd.value ?? 0;
+          const profile = CARTA_SPORT_PROFILES[idx];
+          if (profile) {
+            await send(buildSetTempCmd(profile.tempC));
+            cached.targetTemperature = profile.tempC;
+            cached.activeProfile = idx;
+          }
+          break;
+        }
         case "toggle_heat":
           await send(cached.isHeating ? CMD_HEAT_OFF : CMD_HEAT_ON);
           cached.isHeating = !cached.isHeating;
@@ -141,7 +184,7 @@ function createCartaAdapterBase(
           cached.isHeating = false;
           break;
       }
-      subscribers.forEach(cb => cb({ ...cached }));
+      notify();
     },
 
     subscribeToUpdates(cb) {
@@ -151,12 +194,4 @@ function createCartaAdapterBase(
 
     async getRawData() { return cached.rawData ?? {}; },
   };
-}
-
-export function createCartaAdapter(): VaporizerAdapter {
-  return createCartaAdapterBase("focus_carta", "Carta", ["CARTA", "Focus V Carta"]);
-}
-
-export function createCartaSportAdapter(): VaporizerAdapter {
-  return createCartaAdapterBase("focus_carta_sport", "Carta Sport", ["CARTA SPORT", "Carta Sport"]);
 }
