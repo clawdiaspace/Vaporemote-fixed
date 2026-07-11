@@ -60,7 +60,7 @@ function createSwitchAdapter(
 
   async function send(data: Uint8Array): Promise<void> {
     if (!writeChar) return;
-    try { await writeChar.writeValueWithoutResponse(data); }
+    try { await writeChar.writeValueWithoutResponse(data as BufferSource); }
     catch (e) { console.error("Dr. Dabber write error:", e); }
   }
 

@@ -123,7 +123,7 @@ export function isWebBluetoothSupported(): boolean {
 export function getUnsupportedReason(): string | null {
   if (typeof navigator === "undefined") return "Not in browser context";
   if (!("bluetooth" in navigator)) {
-    const ua = navigator.userAgent;
+    const ua = (navigator as Navigator).userAgent;
     if (/iPhone|iPad|iPod/.test(ua)) {
       return "iOS Safari does not support Web Bluetooth. Use the Bluefy app from the App Store, or a Chrome-based browser on Android/Desktop.";
     }

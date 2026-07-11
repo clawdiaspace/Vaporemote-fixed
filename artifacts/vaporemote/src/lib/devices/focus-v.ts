@@ -102,8 +102,8 @@ function createCartaAdapterBase(
   async function send(data: Uint8Array): Promise<void> {
     if (!writeChar) return;
     try {
-      try { await writeChar.writeValueWithoutResponse(data); }
-      catch { await writeChar.writeValue(data); }
+      try { await writeChar.writeValueWithoutResponse(data as BufferSource); }
+      catch { await writeChar.writeValue(data as BufferSource); }
     } catch (e) { console.warn("Carta write:", e); }
   }
 

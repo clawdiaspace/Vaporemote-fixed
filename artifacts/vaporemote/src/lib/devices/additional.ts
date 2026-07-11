@@ -32,8 +32,8 @@ export function createArizerSoloAdapter(): VaporizerAdapter {
     if (!svc) return;
     try {
       const c = await svc.getCharacteristic(uuid);
-      try { await c.writeValueWithoutResponse(value); }
-      catch { await c.writeValue(value); }
+      try { await c.writeValueWithoutResponse(value as BufferSource); }
+      catch { await c.writeValue(value as BufferSource); }
     } catch (e) { console.warn(`Arizer Solo write ${uuid}:`, e); }
   }
 
@@ -188,8 +188,8 @@ export function createDaVinciIQ2Adapter(): VaporizerAdapter {
     if (!svc) return;
     try {
       const c = await svc.getCharacteristic(uuid);
-      try { await c.writeValueWithoutResponse(value); }
-      catch { await c.writeValue(value); }
+      try { await c.writeValueWithoutResponse(value as BufferSource); }
+      catch { await c.writeValue(value as BufferSource); }
     } catch (e) { console.warn(`IQ2 write ${uuid}:`, e); }
   }
 

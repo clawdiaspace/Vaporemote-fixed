@@ -60,8 +60,8 @@ function decodeStr(dv: DataView): string {
 }
 
 async function safeWrite(char: BluetoothRemoteGATTCharacteristic, value: Uint8Array): Promise<void> {
-  try { await char.writeValueWithoutResponse(value); }
-  catch { await char.writeValue(value); }
+  try { await char.writeValueWithoutResponse(value as BufferSource); }
+  catch { await char.writeValue(value as BufferSource); }
 }
 
 // ─── Volcano Hybrid ───────────────────────────────────────────────────────────
