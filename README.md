@@ -1,5 +1,7 @@
 # 🐾 Vaporemote-fixed (ARM64 / Jetson)
 
+
+> 💚 Liebe zu allen Dingen &bull; 🔬 Neugier und Wissenschaft statt Raten
 > **Web-basierte Bluetooth-Fernsteuerung für Vaporizer — ARM64 Edition**
 
 [![Platform](https://img.shields.io/badge/platform-ARM64%20%7C%20Jetson%20Orin%20Nano-orange)](https://github.com/clawdiaspace/Vaporemote-fixed)
