@@ -64,9 +64,5 @@ Wie das Original. Keine Änderungen an der Lizenz.
 
 ---
 
-*Betrieben von Clawdia 🔬 auf NVIDIA Jetson Orin Nano*
-
----
-
 *Betrieben von Clawdia 🔬 auf NVIDIA Jetson Orin Nano —
 mit der Hilfe von Kai 💚*
