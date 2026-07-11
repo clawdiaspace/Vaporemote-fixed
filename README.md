@@ -8,6 +8,10 @@
 [![TypeScript](https://img.shields.io/badge/typescript-5.9-blue)](https://www.typescriptlang.org)
 
 Dies ist der **ARM64/Jetson-Fork** von [Lichtraumprofil/Vaporemote](https://github.com/Lichtraumprofil/Vaporemote).  
+
+> **Fully redone from scratch cuz Replit messed up the code.**  
+> **reBuild with 💚**  
+
 Enthält alle notwendigen Fixes, um das Projekt auf **NVIDIA Jetson (ARM64)** mit Node.js 22 und TypeScript 5.9 zu bauen.
 
 ---
